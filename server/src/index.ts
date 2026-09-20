@@ -1,8 +1,11 @@
 import express from "express";
 
-import { decodeBase62, encodeBase62 } from "./utils/base62.js";
+import { generateShortCodes } from "./utils/base62.js";
 import { pool } from "./db/index.js";
 import cors from "cors";
+import { DatabaseError } from "pg";
+import { normalizeUrl, ValidationError } from "./utils/normalize-url.js";
+
 
 const BASE_URL = process.env.BASE_URL;
 
@@ -33,10 +36,10 @@ app.get("/:shortcode", async (_req, res) => {
   const shortCode = _req.params.shortcode;
 
   try {
-    const id = decodeBase62(shortCode);
-    const result = await pool.query("select long_url from urls where id=$1", [
-      id,
-    ]);
+    const result = await pool.query(
+      "select long_url from urls where short_code=$1",
+      [shortCode],
+    );
 
     if (result.rowCount === 0) {
       return res.status(404).json({
@@ -46,6 +49,12 @@ app.get("/:shortcode", async (_req, res) => {
     const url = result.rows[0].long_url;
     return res.redirect(url);
   } catch (e) {
+    if (e instanceof DatabaseError) {
+      return res.status(500).json({
+        error: "Internal server error",
+      });
+    }
+
     console.error("Operation failed", e);
     return res.status(404).json({
       error: "URl not found",
@@ -57,25 +66,53 @@ app.get("/:shortcode", async (_req, res) => {
 
 app.post("/urls", async (_req, res) => {
   // get the url from the request
-  const url = _req.body.url;
+  let url;
+  try {
+    url = normalizeUrl(_req.body.url);
+  } catch (error: unknown) {
+    if (error instanceof ValidationError) {
+      return res.status(400).json({
+        error: error?.message,
+      });
+    }
+    throw error;
+  }
 
-  // insert it into db
-  const result = await pool.query(
-    `insert into urls (long_url) values ($1) returning id`,
-    [url],
-  );
+  let retries = 0;
 
-  const id = result.rows[0].id;
-
-  // encode the urls
-  const encodedUrl = encodeBase62(id);
-
-  return res.status(201).json({
-    short_code: encodedUrl,
-    short_url: `${BASE_URL}/${encodedUrl}`,
-    long_url: url,
+  while (retries < 5) {
+    try {
+      //generate random code
+      const shortCode = generateShortCodes(8);
+      await pool.query(
+        `insert into urls (short_code, long_url) values ($1, $2)`,
+        [shortCode, url],
+      );
+      return res.status(201).json({
+        short_code: shortCode,
+        short_url: `${BASE_URL}/${shortCode}`,
+        long_url: url,
+      });
+    } catch (error: unknown) {
+      if (
+        error instanceof DatabaseError &&
+        error?.code === "23505" &&
+        error?.constraint === "urls_short_code_key"
+      ) {
+        retries += 1;
+        continue;
+      }
+      console.error("Maximum retry count of 5 reached.");
+      throw error;
+    }
+  }
+  res.status(500).json({
+    error: "failed to create url",
   });
 });
+
+
+
 
 
 
@@ -96,3 +133,13 @@ app.listen(PORT, () => {
 // console.log(encodeBase62(61));
 // console.log(encodeBase62(62));
 // console.log(encodeBase62(125));
+
+// console.log(generateRandomCodes(8));
+// console.log(generateRandomCodes(8));
+// console.log(generateRandomCodes(8));
+// console.log(generateRandomCodes(8));
+// console.log(generateRandomCodes(8));
+// console.log(generateRandomCodes(8));
+// console.log(generateRandomCodes(8));
+// console.log(generateRandomCodes(8));
+// console.log(generateRandomCodes(8));

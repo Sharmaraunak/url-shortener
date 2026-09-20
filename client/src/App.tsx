@@ -2,11 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldLabel, FieldDescription } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
-import {
-  createShortUrl,
-  getOriginalUrl,
-  type ShortUrlResponse,
-} from "./api/shortenurl-api";
+import { createShortUrl, type ShortUrlResponse } from "./api/shortenurl-api";
 
 function App() {
   const [url, setUrl] = useState("");

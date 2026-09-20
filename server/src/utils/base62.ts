@@ -1,3 +1,5 @@
+import { randomInt } from "node:crypto";
+
 const BASE62 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 /**
@@ -43,4 +45,15 @@ export function decodeBase62(url: string): number {
   }
 
   return decodedNumber;
+}
+
+export function generateShortCodes(length: number): string {
+  let randomCode = "";
+
+  for (let i = 0; i < 8; i++) {
+    const val = randomInt(0, BASE62.length);
+    randomCode += BASE62[val];
+  }
+
+  return randomCode;
 }
