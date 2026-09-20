@@ -1,10 +1,16 @@
 import express from "express";
 
 import { generateShortCodes } from "./utils/base62.js";
-import { pool } from "./db/index.js";
+import { pool } from "./db/postgres.js";
 import cors from "cors";
 import { DatabaseError } from "pg";
 import { normalizeUrl, ValidationError } from "./utils/normalize-url.js";
+import { connectRedis } from "./db/redis.js";
+import {
+  getCachedUrl,
+  setCachedUrl,
+  setCachedUrlNotFound,
+} from "./cache/url-cache.js";
 
 
 const BASE_URL = process.env.BASE_URL;
@@ -36,28 +42,42 @@ app.get("/:shortcode", async (_req, res) => {
   const shortCode = _req.params.shortcode;
 
   try {
-    const result = await pool.query(
-      "select long_url from urls where short_code=$1",
-      [shortCode],
-    );
+    const cachedUrl = await getCachedUrl(shortCode);
+    let url: string;
 
-    if (result.rowCount === 0) {
+    if (cachedUrl?.status === "HIT") {
+      url = cachedUrl.url;
+      return res.redirect(url);
+    }
+
+    if (!cachedUrl || cachedUrl.status === "MISS") {
+      //miss
+      const result = await pool.query(
+        "select long_url from urls where short_code=$1",
+        [shortCode],
+      );
+
+      if (result.rowCount === 0) {
+        await setCachedUrlNotFound(shortCode);
+        return res.status(404).json({
+          error: "URl not found",
+        });
+      }
+
+      url = result.rows[0].long_url;
+      await setCachedUrl(shortCode, url);
+      return res.redirect(url);
+    }
+
+    if (cachedUrl?.status === "NOT_FOUND") {
       return res.status(404).json({
         error: "URl not found",
       });
     }
-    const url = result.rows[0].long_url;
-    return res.redirect(url);
   } catch (e) {
-    if (e instanceof DatabaseError) {
-      return res.status(500).json({
-        error: "Internal server error",
-      });
-    }
-
     console.error("Operation failed", e);
-    return res.status(404).json({
-      error: "URl not found",
+    return res.status(500).json({
+      error: "Internal Server Error",
     });
   }
 });
@@ -119,9 +139,17 @@ app.post("/urls", async (_req, res) => {
 
 const PORT = 3000;
 
-app.listen(PORT, () => {
-  console.log(`server is running on ${BASE_URL}`);
-});
+
+
+async function startServer() {
+  await connectRedis();
+
+  app.listen(PORT, () => {
+    console.log(`server is running on ${BASE_URL}`);
+  });
+}
+
+await startServer();
 
 
 
